@@ -273,6 +273,45 @@ test("live and replay reports flag their mode and keep explicit limitations", ()
   assert.ok(replay.limitations.some((item) => item.includes("回放")));
 });
 
+test("live reports carry session alerts and disclose their scope", () => {
+  const { parsed, findings, geo, timeline } = analyze(sample("web_attack_nginx.log"));
+  const alerts = [
+    {
+      id: "1-finding-sqli",
+      kind: "new_finding",
+      severity: "critical",
+      title: "新增SQL 注入",
+      detail: "2 次命中 · 8.8.8.8",
+      finding_type: "sqli",
+      ips: ["8.8.8.8"],
+      count: 2,
+      at: 1,
+    },
+  ];
+  const common = {
+    events: parsed.events,
+    findings,
+    geo,
+    timeline,
+    format: parsed.format,
+    formatLabel: parsed.formatLabel,
+    sourceLabel: "实时监视 · access.log",
+    fileName: "access.log",
+    live: true,
+  };
+
+  const withAlerts = buildReport({ ...common, alerts });
+  assert.deepEqual(withAlerts.alerts, alerts);
+  assert.equal(withAlerts.stats.alert_count, 1);
+  assert.ok(withAlerts.limitations.some((item) => item.includes("实时告警只比较")));
+
+  const withoutAlerts = buildReport({ ...common });
+  assert.equal(withAlerts.alerts[0].severity, "critical");
+  assert.deepEqual(withoutAlerts.alerts, []);
+  assert.equal(withoutAlerts.stats.alert_count, 0);
+  assert.ok(!withoutAlerts.limitations.some((item) => item.includes("实时告警只比较")));
+});
+
 test("timeline aggregates events into readable buckets", () => {
   const { parsed, findings } = analyze(sample("web_attack_nginx.log"));
   const timeline = buildTimeline(parsed.events, findings);

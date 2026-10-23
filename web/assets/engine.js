@@ -1182,6 +1182,7 @@ export function buildReport({
   live = false,
   replay = false,
   reportId = "",
+  alerts = [],
 }) {
   const uniqueSources = new Set(events.map((e) => e.src_ip).filter(Boolean));
   const severityCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
@@ -1261,6 +1262,7 @@ export function buildReport({
     geo_resolved: resolved,
     demo_geo: demoGeo,
     cloud_geo: cloudGeo,
+    alert_count: Array.isArray(alerts) ? alerts.length : 0,
     severity_counts: severityCounts,
     format: format || "unknown",
     format_label: label || formatLabel(format),
@@ -1280,6 +1282,9 @@ export function buildReport({
   );
   if (live) {
     limitations.push("实时追踪只监视当前选择的日志文件并在浏览器内重新研判；需保持页面打开，日志轮转或文件被替换后应重新选择。");
+    if (Array.isArray(alerts) && alerts.length) {
+      limitations.push("实时告警只比较页面会话内的相邻快照，首个快照仅作基线不触发告警；刷新页面或重新选择文件后告警历史会清空。");
+    }
   }
   if (replay) limitations.push("当前为内置攻击样例的时间回放，仅用于演示实时分析流程，不代表真实网络状态。");
   if (truncated) limitations.push(`单次最多分析 ${MAX_EVENTS} 条事件，超出部分未参与本次研判。`);
@@ -1318,6 +1323,7 @@ export function buildReport({
     },
     findings,
     attacker_origins: origins,
+    alerts: Array.isArray(alerts) ? alerts : [],
     recommendations: recommendationsFor(findings),
     stats,
     timeline,

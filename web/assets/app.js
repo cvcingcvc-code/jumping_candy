@@ -18,6 +18,7 @@ import {
   readGeoCache,
   writeGeoCache,
 } from "./intel.js";
+import { ALERT_KIND_LABELS, deriveAlerts } from "./alerts.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const NS = "http://www.w3.org/2000/svg";
@@ -28,6 +29,7 @@ const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const LIVE_POLL_MS = 2000;
 const LIVE_REPLAY_STEP = 2;
 const LIVE_SAMPLE_ID = "web_attack_nginx.log";
+const MAX_LIVE_ALERTS = 50;
 
 const RISK_CLASS = {
   "严重": "critical",
@@ -70,6 +72,7 @@ const ICONS = {
   clock: '<circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M9 5.5V9l2.2 1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>',
   arrow: '<path d="M3.5 9h10m0 0L9.8 5.3M13.5 9l-3.7 3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
   refresh: '<path d="M14.5 9a5.5 5.5 0 1 1-1.6-3.9M14.5 3.5V6h-2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>',
+  alert: '<path d="M9 2.6 15.4 13.4H2.6L9 2.6Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M9 6.6v3.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="9" cy="11.6" r=".8" fill="currentColor"/>',
 };
 
 const state = {
@@ -101,6 +104,8 @@ const state = {
     reportId: "",
     latestReport: null,
     snapshot: null,
+    alerts: [],
+    alertUnread: 0,
     changeCount: 0,
     refreshSeq: 0,
     controller: null,
@@ -539,6 +544,8 @@ function beginLiveSession(mode) {
   state.live.reportId = "";
   state.live.latestReport = null;
   state.live.snapshot = null;
+  state.live.alerts = [];
+  state.live.alertUnread = 0;
   state.live.changeCount = 0;
   state.live.error = "";
   state.live.lastRefreshAt = null;
@@ -605,6 +612,8 @@ async function pollLiveFile({ force = false } = {}) {
     if (rotated) {
       state.live.reportId = "";
       state.live.snapshot = null;
+      state.live.alerts = [];
+      state.live.alertUnread = 0;
       state.live.changeCount = 0;
       state.live.lastRefreshAt = null;
       showToast("检测到日志被截断或替换，已按新文件重新研判。", "info");
@@ -655,6 +664,11 @@ function analyzeLiveSnapshot({ reason = "poll" } = {}) {
     }
 
     const snapshot = { parsed, findings, attackerIps, baseGeo, timeline, counts, seq, at: Date.now() };
+    const newAlerts = state.live.snapshot ? deriveAlerts(state.live.snapshot, snapshot) : [];
+    if (newAlerts.length) {
+      state.live.alerts = [...state.live.alerts, ...newAlerts].slice(-MAX_LIVE_ALERTS);
+      state.live.alertUnread += newAlerts.length;
+    }
     state.live.snapshot = snapshot;
     state.live.lastRefreshAt = snapshot.at;
     state.live.error = "";
@@ -725,6 +739,7 @@ function composeLiveReport(snapshot, geo) {
     live: true,
     replay,
     reportId: state.live.reportId,
+    alerts: [...state.live.alerts],
     trace: [
       { label: "数据源", detail: `${sourceLabel} · 第 ${state.live.changeCount} 次快照` },
       {
@@ -949,6 +964,8 @@ function stopLive({ silent = false, keepReport = true } = {}) {
   if (!keepReport) {
     state.live.latestReport = null;
     state.live.reportId = "";
+    state.live.alerts = [];
+    state.live.alertUnread = 0;
     state.live.changeCount = 0;
     state.live.lastRefreshAt = null;
     state.live.lastSignature = "";
@@ -1104,7 +1121,9 @@ function updateLiveStatus() {
     title = state.live.paused ? "监视已暂停" : "实时监视中";
     detail = `${report ? `${report.stats.total_events} 条事件 · ${report.stats.finding_count} 类命中` : "等待首个快照"} · ${
       formatBytes(state.live.fileMeta?.size || 0)
-    } · ${state.live.lastRefreshAt ? clockTime(state.live.lastRefreshAt) : "—"}`;
+    } · ${state.live.lastRefreshAt ? clockTime(state.live.lastRefreshAt) : "—"}${
+      state.live.alertUnread ? ` · ${state.live.alertUnread} 条新告警` : ""
+    }`;
     if (state.live.paused) {
       actions.append(
         liveActionButton("继续监视", resumeLive),
@@ -1657,6 +1676,11 @@ function renderReport(report, options = {}) {
   hero.append(actions);
   root.append(hero);
 
+  const liveAlerts = report.live ? [...(report.alerts || [])] : [];
+  if (liveAlerts.length && state.live.alertUnread > 0) {
+    root.append(renderLiveAlertBar(report, liveAlerts));
+  }
+
   const attackerCount = report.attacker_origins.length;
   const kpis = [
     {
@@ -1695,6 +1719,8 @@ function renderReport(report, options = {}) {
     kpiGrid.append(card);
   }
   root.append(kpiGrid);
+
+  if (liveAlerts.length) root.append(renderLiveAlertsCard(liveAlerts));
 
   const reportGrid = node("div", "report-grid");
   reportGrid.append(renderTimelineCard(report), renderSeverityCard(report));
@@ -1758,6 +1784,86 @@ function renderLiveStrip(report) {
     node("span", "live-strip-meta", state.live.lastRefreshAt ? `快照 ${clockTime(state.live.lastRefreshAt)}` : "")
   );
   return strip;
+}
+
+function topAlertSeverity(alerts) {
+  const rank = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+  return [...alerts].sort((a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9))[0];
+}
+
+function renderLiveAlertBar(report, alerts) {
+  const unread = Math.min(state.live.alertUnread, alerts.length);
+  const top = topAlertSeverity(alerts.slice(-unread));
+  const bar = node("section", `live-alert-bar sev-${top.severity || "info"}`);
+  bar.append(icon("alert", "live-alert-icon"));
+
+  const copy = node("div", "live-alert-copy");
+  copy.append(
+    node("strong", "live-alert-title", `新增 ${unread} 条实时告警`),
+    node("span", "live-alert-preview", `${top.title} · ${top.detail}`)
+  );
+
+  const actions = node("div", "live-alert-actions");
+  const view = node("button", "ghost-btn small");
+  view.type = "button";
+  view.append(node("span", "", "查看告警"));
+  view.addEventListener("click", () => {
+    document.querySelector("[data-live-alerts]")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  const read = node("button", "text-btn", "标记已读");
+  read.type = "button";
+  read.addEventListener("click", () => {
+    state.live.alertUnread = 0;
+    updateLiveStatus();
+    if (state.live.latestReport) renderReport(state.live.latestReport, { preserve: true, scroll: false });
+  });
+  actions.append(view, read);
+
+  bar.append(copy, actions);
+  return bar;
+}
+
+function renderLiveAlertsCard(alerts) {
+  const unread = Math.min(state.live.alertUnread, alerts.length);
+  const unreadStart = Math.max(0, alerts.length - unread);
+  const card = node("section", "card live-alerts-card");
+  card.dataset.liveAlerts = "true";
+
+  const head = node("div", "card-head");
+  head.append(
+    node("h3", "", "实时告警"),
+    node("span", "card-meta", `${alerts.length} 条 · 本次会话${unread ? ` · ${unread} 条未读` : ""}`)
+  );
+  card.append(head);
+
+  const list = node("ol", "alert-list");
+  alerts
+    .map((alert, index) => ({ alert, index }))
+    .reverse()
+    .forEach(({ alert, index }) => {
+      const severity = alert.severity || "info";
+      const item = node("li", `live-alert-item sev-${severity}${unread && index >= unreadStart ? " is-unread" : ""}`);
+      const meta = node("div", "live-alert-meta");
+      meta.append(
+        node("span", `sev-pill sev-${severity}`, SEVERITY_TEXT[severity] || "提示"),
+        node("span", "alert-kind", ALERT_KIND_LABELS[alert.kind] || "告警"),
+        node("time", "alert-time", clockTime(alert.at))
+      );
+      const body = node("div", "live-alert-body");
+      body.append(node("strong", "alert-title", alert.title));
+      body.append(node("span", "alert-detail", alert.detail));
+      if (alert.ips?.length) {
+        const ips = node("div", "alert-ips");
+        alert.ips.slice(0, 4).forEach((ip) => ips.append(node("code", "", ip)));
+        body.append(ips);
+      }
+      item.append(meta, body);
+      list.append(item);
+    });
+
+  card.append(list);
+  card.append(node("p", "card-note", "告警只比较本次会话内的相邻快照，首个快照作为基线；刷新页面、重新选择文件或日志被替换后历史会清空。"));
+  return card;
 }
 
 function actionButton(action, label, iconName) {
@@ -2287,6 +2393,7 @@ function renderMethod() {
     "规则引擎擅长已知特征与高频行为，未知攻击、加密流量与低速长期攻击可能漏检。",
     `单次最多分析 ${(20000).toLocaleString("zh-CN")} 条事件；超出部分会提示截断。`,
     "实时模式只监视当前选择的文本文件，需保持页面打开；日志轮转、文件被替换或浏览器撤销权限后需重新选择。",
+    "实时告警只比较本次会话内的相邻快照，首个快照作为基线；最多保留 50 条，刷新或重新选择文件后历史清空。",
     "云端无法抓取网卡流量，端口监测使用固定种子的模拟数据演示完整链路。",
     "本工具仅用于防御性分析与教学，请只在获得授权的资产上使用。",
   ].forEach((item) => limits.append(node("li", "", item)));
@@ -2319,6 +2426,7 @@ function downloadMarkdown(report) {
   lines.push(`- 溯源覆盖：${report.stats.geo_resolved}/${report.attacker_origins.length}`);
   if (report.stats.cloud_geo) lines.push(`- 云端情报：${report.stats.cloud_geo} 个（${CLOUD_GEO.id}）`);
   if (report.stats.demo_geo) lines.push(`- 演示归属地：${report.stats.demo_geo} 个`);
+  if (report.live) lines.push(`- 实时告警：${report.alerts?.length || 0} 条（本次会话）`);
   lines.push("");
 
   if (report.findings.length) {
@@ -2354,6 +2462,16 @@ function downloadMarkdown(report) {
     lines.push("");
   }
 
+  if (report.live && report.alerts?.length) {
+    lines.push("## 实时告警（本次会话）", "");
+    lines.push("| 时间 | 等级 | 类型 | 内容 |");
+    lines.push("| --- | --- | --- | --- |");
+    for (const alert of report.alerts) {
+      lines.push(`| ${clockTime(alert.at)} | ${SEVERITY_TEXT[alert.severity] || "提示"} | ${md(ALERT_KIND_LABELS[alert.kind] || "告警")} | ${md(`${alert.title} · ${alert.detail}`)} |`);
+    }
+    lines.push("");
+  }
+
   lines.push("## 处置与加固建议", "");
   report.recommendations.forEach((item, index) => lines.push(`${index + 1}. ${item}`));
   lines.push("", "## 研判边界", "");
@@ -2380,11 +2498,14 @@ function downloadBlob(blob, filename) {
 }
 
 async function copySummary(report) {
+  const alertLine = report.live && report.alerts?.length
+    ? `\n实时告警：${report.alerts.length} 条（本次会话）`
+    : "";
   const summary = [
     report.verdict,
     `风险等级：${report.risk_level}`,
     report.summary,
-    `报告编号：${report.report_id}`,
+    `报告编号：${report.report_id}${alertLine}`,
   ].join("\n\n");
   try {
     if (navigator.clipboard?.writeText) {
