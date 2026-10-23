@@ -8,11 +8,37 @@
 
 ---
 
+## ☁️ 云端演示版（纯浏览器，无需后端）
+
+`web/` 是可直接部署到任意静态托管（含 Qoder Sites）的浏览器端版本，不需要 Python、FastAPI 或 DeepSeek Key：
+
+- 日志解析、10 类规则检测、IP 溯源、时间线与安全报告**全部在浏览器内完成**，原始日志不上传。
+- 支持 Nginx / Apache、CSV、JSON / JSONL、key=value 四类输入，内置 4 组样例。
+- **实时监视**：选择本地访问日志后每 2 秒检查变化，只读取你主动选择的文件并在浏览器内重新研判；可暂停、继续、立即刷新、停止，日志被截断或替换时会自动重置。页面关闭即停止，需保持页面打开。
+- **实时回放**：用内置攻击样例每 2 秒追加 2 行，演示增量研判；不读取网卡，也不代表真实流量。
+- **可选云端来源情报**：开启后仅将**公网攻击源 IP** 发送到 `ipwho.is`，补充国家/省份/城市、ASN/机构与网络类型；内网地址与内置演示 IP 不会被发送。结果缓存在浏览器 7 天，可随时关闭开关。
+- 端口监测使用**固定种子的模拟流量**（页面内明确标注），演示抓包后的完整检测链路。
+- 单文件上限 10MB，单次最多分析 20,000 条事件；超出部分会截断并在报告中标注。
+- 归属地用于研判参考：云端结果为城市级估算，VPN / 代理 / NAT / CDN 会降低准确性，不可用于取证。
+
+本地预览与测试：
+
+```bash
+python -m http.server 4173 --directory web   # http://127.0.0.1:4173
+node --test tests/engine.test.mjs tests/intel.test.mjs
+```
+
+静态文件位于 `web/`（`index.html`、`assets/`、`data/samples/`、`favicon.svg`），无构建步骤。
+
+---
+
 ## ✨ 功能特性
 
 | 能力 | 说明 |
 | --- | --- |
-| 多种输入 | 粘贴日志 / 上传日志文件 / 指定端口（自动抓包） |
+| 多种输入 | 粘贴日志 / 上传日志文件 / 选择本地文件实时监视 / 指定端口（自动抓包） |
+| 实时增量 | 每 2 秒检查所选日志变化，暂停、恢复、立即刷新、停止；日志轮转自动重置 |
+| 来源情报 | 本地演示归属地 + 可选 ipwho.is 公网 IP 城市级情报（含 ASN / 机构 / 网络类型） |
 | 攻击检测 | SQL 注入、XSS、目录遍历、命令注入、WebShell、端口扫描、暴力破解、CC/DDoS、扫描器指纹等 |
 | 攻击溯源 | 攻击者 IP 定位到**省份级**归属地（ip2region 离线库 / 在线 API / 内置演示映射）|
 | 安全报告 | 含研判结论、风险等级、时间范围、攻击明细（含 MITRE ATT&CK）、溯源、处置建议，可下载 JSON |
@@ -68,8 +94,9 @@ backend/
     samples/         内置示例日志
     geoip/           内置演示 IP 映射 / ip2region xdb 位置
 frontend/            index.html · style.css · app.js
+web/                 云端静态演示版（浏览器端引擎 + UI + 样例）
 scripts/             本机真实抓包脚本（Windows）
-tests/               单元测试
+tests/               单元测试（Python 后端 + 浏览器端引擎）
 ```
 
 ---
@@ -139,6 +166,7 @@ capture_traffic.bat        REM 双击运行，或在终端执行
 ```bash
 . .venv/bin/activate
 python tests/test_pipeline.py      # 或 python -m pytest tests/ -v
+node --test tests/engine.test.mjs tests/intel.test.mjs  # 云端静态版检测引擎与来源情报
 ```
 
 ---

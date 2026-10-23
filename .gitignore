@@ -18,6 +18,10 @@ backend/data/captures/*
 backend/data/geoip/*.xdb
 *.pcap
 *.pcapng
+/server.log
+
+# Qoder Sites binding (generated, project-specific)
+*.qoder.site
 
 # OS / editor
 .DS_Store

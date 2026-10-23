@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#070b12" />
+  <meta name="description" content="哨兵 Sentinel：在浏览器内完成流量日志解析、实时追踪、攻击检测、IP 来源研判与安全分析报告生成。原始日志不离开浏览器。" />
+  <title>哨兵 Sentinel · 流量取证工作台</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#workspaceContent">跳到分析结果</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 44 44" fill="none" aria-hidden="true">
+        <path d="M22 3 39 12.5v19L22 41 5 31.5v-19L22 3Z" stroke="currentColor" stroke-width="1.6" />
+        <path d="M22 12v20M12 22h20" stroke="currentColor" stroke-width="1.2" opacity=".5" />
+        <circle cx="22" cy="22" r="5.5" stroke="currentColor" stroke-width="1.6" />
+        <circle cx="22" cy="22" r="1.6" fill="currentColor" />
+      </svg>
+      <div class="brand-copy">
+        <div class="brand-line"><span class="brand-cn">哨兵</span><span class="brand-en">SENTINEL</span></div>
+        <p class="brand-sub">Cloud traffic forensics</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span class="status-pill"><span class="status-dot"></span>规则引擎就绪</span>
+      <span class="privacy-pill" title="原始日志留在浏览器；开启云端来源情报时仅发送公网攻击源 IP 用于归属地查询。">
+        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="3.2" y="7" width="9.6" height="6.4" rx="1.4" stroke="currentColor" stroke-width="1.1" />
+          <path d="M5.4 7V5.4a2.6 2.6 0 0 1 5.2 0V7" stroke="currentColor" stroke-width="1.1" />
+        </svg>
+        日志不出浏览器
+      </span>
+      <button id="methodBtn" class="ghost-btn compact" type="button">方法与边界</button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <aside class="source-panel" aria-label="数据源与分析设置">
+      <div class="panel-intro">
+        <div class="eyebrow">01 / 数据源</div>
+        <p class="panel-lead">选择一份流量数据，或开启本地日志实时监视。</p>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="数据源类型" id="sourceTabs">
+        <button class="source-tab" id="tab-sample" role="tab" aria-selected="true" aria-controls="pane-sample" tabindex="0" data-tab="sample" type="button">
+          <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="m9 2 6.5 3.4L9 8.8 2.5 5.4 9 2Z" stroke="currentColor" stroke-width="1.2"/><path d="m2.5 9 6.5 3.4L15.5 9M2.5 12.6 9 16l6.5-3.4" stroke="currentColor" stroke-width="1.2"/></svg>
+          <span>示例</span>
+        </button>
+        <button class="source-tab" id="tab-paste" role="tab" aria-selected="false" aria-controls="pane-paste" tabindex="-1" data-tab="paste" type="button">
+          <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><rect x="3.5" y="3.5" width="11" height="12" rx="1.6" stroke="currentColor" stroke-width="1.2"/><path d="M6.5 6.5h5M6.5 9.5h5M6.5 12.5h3" stroke="currentColor" stroke-width="1.2"/></svg>
+          <span>粘贴</span>
+        </button>
+        <button class="source-tab" id="tab-upload" role="tab" aria-selected="false" aria-controls="pane-upload" tabindex="-1" data-tab="upload" type="button">
+          <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M9 11.5V3.5m0 0L5.8 6.7M9 3.5l3.2 3.2" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 11.2v2.1c0 .7.5 1.2 1.2 1.2h8.6c.7 0 1.2-.5 1.2-1.2v-2.1" stroke="currentColor" stroke-width="1.2"/></svg>
+          <span>上传</span>
+        </button>
+        <button class="source-tab" id="tab-live" role="tab" aria-selected="false" aria-controls="pane-live" tabindex="-1" data-tab="live" type="button">
+          <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><circle cx="9" cy="9" r="6.2" stroke="currentColor" stroke-width="1.2"/><circle cx="9" cy="9" r="2" fill="currentColor"/><path d="M9 1.5v2M9 14.5v2M1.5 9h2M14.5 9h2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          <span>实时</span>
+        </button>
+        <button class="source-tab" id="tab-port" role="tab" aria-selected="false" aria-controls="pane-port" tabindex="-1" data-tab="port" type="button">
+          <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M2.5 9h2.2l1.4-3.4L8.4 12l1.5-3.8 1.2 2.4h4.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>模拟</span>
+        </button>
+      </div>
+
+      <div class="source-panes">
+        <section class="source-pane" id="pane-sample" data-pane="sample" role="tabpanel" aria-labelledby="tab-sample">
+          <div class="pane-head"><span>内置样例</span><span class="pane-hint">点击载入</span></div>
+          <div id="samplesList" class="sample-list"></div>
+          <div id="sampleMeta" class="sample-meta">正在载入样例…</div>
+          <details id="samplePreview" class="sample-preview" hidden>
+            <summary>查看原始日志（前 3 行）</summary>
+            <pre id="samplePreviewBody"></pre>
+          </details>
+        </section>
+
+        <section class="source-pane" id="pane-paste" data-pane="paste" role="tabpanel" aria-labelledby="tab-paste" hidden>
+          <label class="field-label" for="logInput">粘贴结构化日志</label>
+          <textarea id="logInput" maxlength="5000000" spellcheck="false" placeholder="支持 Nginx / Apache combined、CSV、JSON、JSONL、key=value。&#10;&#10;示例：&#10;113.108.182.66 - - [15/Jun/2026:10:21:07 +0800] &quot;GET /product.php?id=1' UNION SELECT username,password FROM users-- HTTP/1.1&quot; 200 5821 &quot;-&quot; &quot;sqlmap/1.7.2&quot;"></textarea>
+          <div class="field-foot"><span id="logCount">0 字符</span><button id="clearPaste" class="text-btn" type="button">清空</button></div>
+        </section>
+
+        <section class="source-pane" id="pane-upload" data-pane="upload" role="tabpanel" aria-labelledby="tab-upload" hidden>
+          <input type="file" id="fileInput" accept=".log,.txt,.csv,.json,.jsonl,.ndjson" hidden />
+          <label class="dropzone" id="dropzone" for="fileInput">
+            <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+              <path d="M16 21V7m0 0-5 5m5-5 5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M6 20v4a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            <span class="drop-title">点击或拖拽日志文件</span>
+            <span class="drop-sub">.log / .txt / .csv / .json / .jsonl / .ndjson · 最大 10MB</span>
+            <span class="drop-note">不接收 PCAP 与二进制文件</span>
+          </label>
+          <div id="uploadInfo" class="upload-info" hidden></div>
+        </section>
+
+        <section class="source-pane" id="pane-live" data-pane="live" role="tabpanel" aria-labelledby="tab-live" hidden>
+          <div class="pane-head"><span>本地日志增量监视</span><span class="pane-hint">每 2 秒检查</span></div>
+          <button class="live-picker" id="livePickBtn" type="button">
+            <span class="live-picker-icon" aria-hidden="true">
+              <svg viewBox="0 0 22 22" fill="none"><path d="M3.5 11h3l1.6-4.2L11 15l1.8-5 1.1 2.4h3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="1.1" opacity=".35"/></svg>
+            </span>
+            <span class="live-picker-copy">
+              <strong id="livePickTitle">选择访问日志文件</strong>
+              <span id="livePickSub">读取新增内容并自动研判，文件正文不上传</span>
+            </span>
+            <span class="live-picker-action" id="livePickAction">选择</span>
+          </button>
+          <div id="liveStatus" class="live-status" hidden></div>
+          <label class="intel-toggle" for="geoLookupToggle">
+            <span class="intel-copy">
+              <strong>云端来源情报</strong>
+              <span>仅发送公网攻击源 IP 到 ipwho.is，查询归属地与 ASN</span>
+            </span>
+            <span class="switch">
+              <input id="geoLookupToggle" type="checkbox" checked />
+              <span class="switch-track" aria-hidden="true"></span>
+            </span>
+          </label>
+          <div class="live-links">
+            <button id="liveReplayBtn" class="text-btn" type="button">用攻击样例体验实时</button>
+            <span class="pane-hint">无本地日志时</span>
+          </div>
+          <p class="callout">云端无法直接读取网卡。实时模式只监视你主动选择的日志文件，需保持页面打开；开启云端情报后也只会发送公网 IP，不发送日志正文。</p>
+        </section>
+
+        <section class="source-pane" id="pane-port" data-pane="port" role="tabpanel" aria-labelledby="tab-port" hidden>
+          <div class="field-row">
+            <div class="field">
+              <label class="field-label" for="portInput">目标端口</label>
+              <input id="portInput" type="number" min="1" max="65535" inputmode="numeric" value="80" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="durationInput">监测时长</label>
+              <select id="durationInput">
+                <option value="10">10 秒</option>
+                <option value="15" selected>15 秒</option>
+                <option value="30">30 秒</option>
+                <option value="60">60 秒</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="hostInput">目标主机（可选）</label>
+            <input id="hostInput" type="text" value="demo.local" autocomplete="off" />
+          </div>
+          <p class="callout">云端无法读取你的网卡。这里生成固定种子的模拟流量，演示抓包后的完整检测、溯源与报告链路。</p>
+        </section>
+      </div>
+
+      <div class="source-actions">
+        <div class="source-hint" id="sourceHint">从内置样例开始</div>
+        <button id="analyzeBtn" class="primary-btn" type="button">
+          <span class="btn-label">运行分析</span>
+          <span class="btn-spinner" aria-hidden="true"></span>
+          <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M3.5 9h10m0 0L9.8 5.3M13.5 9l-3.7 3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button id="resetBtn" class="ghost-btn wide" type="button">重置输入与结果</button>
+      </div>
+
+      <div class="panel-foot">
+        <span>10 类规则</span>
+        <span>4 种格式</span>
+        <span>实时增量</span>
+      </div>
+    </aside>
+
+    <main class="workspace" id="workspace">
+      <div id="workspaceContent"></div>
+    </main>
+  </div>
+
+  <dialog id="methodDialog" class="method-dialog" aria-labelledby="methodTitle">
+    <div class="dialog-head">
+      <div>
+        <div class="eyebrow">ENGINE / METHOD</div>
+        <h2 id="methodTitle">检测方法与研判边界</h2>
+      </div>
+      <button id="methodClose" class="icon-btn" type="button" aria-label="关闭方法与边界">×</button>
+    </div>
+    <div id="methodContent" class="dialog-body"></div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>
