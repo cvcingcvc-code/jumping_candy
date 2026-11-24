@@ -53,6 +53,60 @@ def test_detect_brute_force():
     assert any(f["type_en"] == "brute_force" for f in findings)
 
 
+def test_brute_force_ignores_successful_login():
+    """验证成功的登录请求 (200 OK) 不会被误判为暴力破解。"""
+    lines = []
+    for i in range(10):
+        lines.append(f'7.7.7.7 - - [15/Jun/2026:02:11:0{i} +0800] "POST /admin/login HTTP/1.1" 200 1024 "-" "x"')
+    events, _ = parser.parse_logs("\n".join(lines))
+    findings = detector.detect_attacks(events)
+    assert not any(f["type_en"] == "brute_force" for f in findings)
+
+
+def test_sensitive_path_probe_requires_distinct_paths():
+    """多次访问同一个后台管理页面不触发敏感路径扫描，需访问至少 3 个不同敏感路径。"""
+    # 同一路径重复 5 次
+    single_path = [
+        '8.8.8.8 - - [15/Jun/2026:10:00:00 +0800] "GET /admin/dashboard HTTP/1.1" 200 500 "-" "user"'
+        for _ in range(5)
+    ]
+    events, _ = parser.parse_logs("\n".join(single_path))
+    findings = detector.detect_attacks(events)
+    assert not any(f["type_en"] == "sensitive_path_probe" for f in findings)
+
+    # 探测 3 个不同敏感路径
+    probe_paths = [
+        '8.8.8.8 - - [15/Jun/2026:10:00:01 +0800] "GET /.git/config HTTP/1.1" 404 100 "-" "scanner"',
+        '8.8.8.8 - - [15/Jun/2026:10:00:02 +0800] "GET /.env HTTP/1.1" 404 100 "-" "scanner"',
+        '8.8.8.8 - - [15/Jun/2026:10:00:03 +0800] "GET /phpmyadmin HTTP/1.1" 404 100 "-" "scanner"',
+    ]
+    events2, _ = parser.parse_logs("\n".join(probe_paths))
+    findings2 = detector.detect_attacks(events2)
+    assert any(f["type_en"] == "sensitive_path_probe" for f in findings2)
+
+
+def test_double_url_decode_detection():
+    """测试经过双重 URL 编码的攻击载荷被正确解码检出。"""
+    log = '1.1.1.1 - - [15/Jun/2026:10:00:00 +0800] "GET /api?cmd=%253bcat%2520%252fetc%252fpasswd HTTP/1.1" 200 1 "-" "x"'
+    events, _ = parser.parse_logs(log)
+    findings = detector.detect_attacks(events)
+    types = {f["type_en"] for f in findings}
+    assert "command_injection" in types
+
+
+def test_simulated_traffic_clear_labeling():
+    """验证模拟抓包流量在报告中被打上清晰的演练标识，且包含溯源局限性免责说明。"""
+    events = [{"src_ip": "1.1.1.1", "timestamp": "2026-06-15T10:00:00"}]
+    findings = [{"type": "SQL 注入", "type_en": "sql_injection", "severity": "high", "src_ips": ["1.1.1.1"], "count": 1}]
+    geo = {"1.1.1.1": {"ip": "1.1.1.1", "country": "中国", "province": "广东", "city": "广州"}}
+    report = reporter.build_report(events, findings, geo, capture_meta={"simulated": True, "used_backend": "simulate"})
+
+    assert report["is_simulated"] is True
+    assert "模拟演练" in report["verdict"]
+    assert "模拟" in report["summary"]
+    assert "免责" in report.get("disclaimer", "") or "说明" in report.get("disclaimer", "")
+
+
 def test_geolocate_private_and_demo():
     g = geoip.geolocate_ip("10.0.0.1")
     assert g["is_private"] is True

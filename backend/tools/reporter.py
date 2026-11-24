@@ -50,13 +50,27 @@ def _build_stats(events, findings, geo_results) -> dict:
     }
 
 
-def _template_narrative(findings, geo_results, stats) -> dict:
+GEOIP_DISCLAIMER = (
+    "研判说明：IP 归属地基于公网 BGP/ASN/地理数据库解析，受代理、VPN、CDN 与跳板机影响，"
+    "仅代表流量出口节点，不可等同于攻击者真实物理位置。"
+)
+
+
+def _template_narrative(findings, geo_results, stats, is_simulated: bool = False) -> dict:
     """无大模型时的兜底研判。"""
-    if not findings:
+    if not stats.get("total_events"):
         return {
-            "verdict": "未在所提供的流量中发现明显攻击特征。",
+            "verdict": "未在所提供的输入中解析到有效流量事件。",
             "risk_level": "无明显风险",
-            "summary": f"共分析 {stats['total_events']} 条流量事件、{stats['unique_src_ips']} 个来源 IP，"
+            "summary": "输入数据未能解析出结构化网络流量记录，请检查日志格式是否属于支持的 Nginx、CSV、JSON、JSONL 或 key=value 规范。",
+            "recommendations": ["确认日志编码为 UTF-8 或 GBK。", "检查日志是否缺少关键字段（如 IP、时间、请求行）。"],
+        }
+    if not findings:
+        prefix = "【模拟演练】" if is_simulated else ""
+        return {
+            "verdict": f"{prefix}未在所提供的流量中发现明显攻击特征。",
+            "risk_level": "无明显风险",
+            "summary": f"{'【模拟演练模式】' if is_simulated else ''}共分析 {stats['total_events']} 条流量事件、{stats['unique_src_ips']} 个来源 IP，"
                        "规则引擎未命中已知攻击特征或异常行为阈值。建议持续监测。",
             "recommendations": ["保持日志留存与定期审计。", "持续监测异常流量与登录行为。"],
         }
@@ -74,12 +88,27 @@ def _template_narrative(findings, geo_results, stats) -> dict:
         rec = _REMEDIATION.get(f["type_en"])
         if rec and rec not in recs:
             recs.append(rec)
-    recs.append("封禁/限速上述攻击来源 IP，并留存证据用于追溯。")
+    recs.append("封禁/限速上述攻击来源 IP，并留存证据用于追溯（注意核查是否为代理或 CDN 出口）。")
+
+    if is_simulated:
+        verdict = f"【模拟演练】检测到 {types} 等模拟攻击行为，已成功验证端到端监测与研判流程。"
+        summary = (
+            f"【注意：本组数据由沙箱模拟攻击生成，用于验证检测与溯源流程，非宿主机真实网络受攻击】"
+            f"在 {stats['total_events']} 条模拟流量中命中 {len(findings)} 类攻击特征（{types}）。"
+            f"模拟攻击来源：{origin_text}。"
+        )
+    else:
+        verdict = f"检测到 {types} 等攻击行为，研判为疑似或真实攻击。"
+        summary = (
+            f"在 {stats['total_events']} 条流量中命中 {len(findings)} 类攻击特征（{types}）。"
+            f"主要攻击来源出口：{origin_text}（注：出口 IP 归属地仅供线索追踪，不可等同于物理位置）。"
+            f"请尽快按建议处置。"
+        )
+
     return {
-        "verdict": f"检测到 {types} 等攻击行为，研判为真实攻击。",
+        "verdict": verdict,
         "risk_level": _RISK_BY_SEVERITY.get(top_sev, "中危"),
-        "summary": f"在 {stats['total_events']} 条流量中命中 {len(findings)} 类攻击特征（{types}）。"
-                   f"主要攻击来源：{origin_text}。请尽快按建议处置。",
+        "summary": summary,
         "recommendations": recs[:6],
     }
 
@@ -109,11 +138,13 @@ def _llm_narrative(findings, geo_results, stats):
 
 
 def build_report(events, findings, geo_results, capture_meta=None) -> dict:
+    meta = capture_meta or {}
+    is_simulated = bool(meta.get("simulated"))
     stats = _build_stats(events, findings, geo_results)
     narrative = _llm_narrative(findings, geo_results, stats)
     llm_powered = narrative is not None
     if narrative is None:
-        narrative = _template_narrative(findings, geo_results, stats)
+        narrative = _template_narrative(findings, geo_results, stats, is_simulated=is_simulated)
 
     attacker_origins = []
     attacker_ips = {ip for f in findings for ip in f.get("src_ips", [])}
@@ -135,6 +166,8 @@ def build_report(events, findings, geo_results, capture_meta=None) -> dict:
         "recommendations": narrative.get("recommendations", []),
         "stats": stats,
         "llm_powered": llm_powered,
-        "capture_meta": capture_meta or {},
+        "is_simulated": is_simulated,
+        "disclaimer": GEOIP_DISCLAIMER,
+        "capture_meta": meta,
     }
     return report

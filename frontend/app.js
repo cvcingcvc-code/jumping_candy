@@ -162,7 +162,7 @@ function renderReport(rep) {
   const html = `
   <div class="report" id="${rep.report_id}">
     <div class="report-head">
-      <h3>🛡️ 安全分析报告<span class="badge ${sevClass}">${esc(rep.risk_level)}</span></h3>
+      <h3>🛡️ 安全分析报告<span class="badge ${sevClass}">${esc(rep.risk_level)}</span>${rep.is_simulated ? '<span class="badge warn">模拟演练数据</span>' : ''}</h3>
       <div class="report-meta">报告编号 ${esc(rep.report_id)} · 生成于 ${esc(rep.generated_at)}
         · 研判引擎：${rep.llm_powered ? "DeepSeek 大模型" : "内置规则（离线）"}
         · 时间范围：${esc(tr.start || "—")} ~ ${esc(tr.end || "—")}</div>
@@ -189,6 +189,8 @@ function renderReport(rep) {
       <tbody>${originsRows}</tbody></table>` : ""}
 
       ${recs ? `<h4>处置与加固建议</h4><ul class="recs">${recs}</ul>` : ""}
+
+      ${rep.disclaimer ? `<div class="disclaimer-note">ℹ️ ${esc(rep.disclaimer)}</div>` : ""}
 
       <div class="report-actions">
         <button onclick='downloadReport(${JSON.stringify(rep.report_id)})'>⬇ 下载报告(JSON)</button>

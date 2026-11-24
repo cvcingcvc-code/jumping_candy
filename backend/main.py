@@ -1,6 +1,8 @@
 """FastAPI 服务入口：API 路由 + 静态前端托管。"""
 from __future__ import annotations
 
+import logging
+import re
 import uuid
 from pathlib import Path
 
@@ -16,12 +18,14 @@ from .agent.llm import llm_available
 from .agent.memory import thread_config
 from .schemas import AnalyzeRequest
 
+logger = logging.getLogger("sentinel")
 app = FastAPI(title="哨兵 · 网络安全流量分析智能体", version="1.0.0")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
 
 FRONTEND_DIR = config.ROOT_DIR / "frontend"
+WEB_DIR = config.ROOT_DIR / "web"
 
 
 @app.get("/api/health")
@@ -49,8 +53,13 @@ def list_samples():
 
 @app.get("/api/samples/{name}")
 def get_sample(name: str):
-    path = (config.SAMPLE_DIR / name).resolve()
-    if not str(path).startswith(str(config.SAMPLE_DIR.resolve())) or not path.is_file():
+    sample_dir = config.SAMPLE_DIR.resolve()
+    path = (sample_dir / name).resolve()
+    try:
+        path.relative_to(sample_dir)
+    except ValueError:
+        raise HTTPException(404, "示例不存在")
+    if not path.is_file():
         raise HTTPException(404, "示例不存在")
     return {"name": name, "content": path.read_text(encoding="utf-8", errors="replace")}
 
@@ -88,8 +97,15 @@ async def upload(file: UploadFile = File(...)):
 
 
 def _read_upload(upload_id: str) -> str:
-    path = (config.UPLOAD_DIR / upload_id).resolve()
-    if not str(path).startswith(str(config.UPLOAD_DIR.resolve())) or not path.is_file():
+    if not re.match(r"^[a-f0-9]{32}\.[a-z0-9]+$", upload_id):
+        raise HTTPException(400, "非法的文件 ID 格式。")
+    upload_dir = config.UPLOAD_DIR.resolve()
+    path = (upload_dir / upload_id).resolve()
+    try:
+        path.relative_to(upload_dir)
+    except ValueError:
+        raise HTTPException(404, "上传文件不存在或已过期。")
+    if not path.is_file():
         raise HTTPException(404, "上传文件不存在或已过期。")
     return path.read_text(encoding="utf-8", errors="replace")
 
@@ -127,8 +143,11 @@ def analyze(req: AnalyzeRequest):
     graph = get_graph()
     try:
         result = graph.invoke(state_in, config=thread_config(req.thread_id))
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(500, f"分析过程出错：{e}")
+        logger.exception("Analyze pipeline error")
+        raise HTTPException(500, f"分析引擎执行异常：{e}")
 
     reply = ""
     for m in reversed(result.get("messages", [])):
@@ -146,6 +165,9 @@ def analyze(req: AnalyzeRequest):
 
 
 # ---- 前端静态托管（放在最后，避免覆盖 /api 路由）----
+if WEB_DIR.exists():
+    app.mount("/web", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
+
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 

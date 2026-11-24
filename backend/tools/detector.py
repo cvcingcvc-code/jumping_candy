@@ -116,11 +116,17 @@ def _ts_to_epoch(ts):
 
 
 def _decoded_url(ev: dict) -> str:
-    url = ev.get("url") or ""
-    try:
-        return unquote(url)
-    except Exception:
-        return url
+    url = str(ev.get("url") or "")
+    cur = url
+    for _ in range(2):
+        try:
+            nxt = unquote(cur)
+            if nxt == cur:
+                break
+            cur = nxt
+        except Exception:
+            break
+    return cur
 
 
 def _mk_finding(type_en, meta, src_ips, evidence, count, dst_ports=None,
@@ -176,7 +182,7 @@ def _signature_findings(events: list[dict]) -> list[dict]:
 def _scanner_findings(events: list[dict]) -> list[dict]:
     findings = []
     ua_hits = defaultdict(list)
-    path_hits = defaultdict(list)
+    path_hits = defaultdict(dict)  # src_ip -> {matched_sensitive_path: event_raw}
     ua_tools = set()
     for ev in events:
         ua = (ev.get("user_agent") or "").lower()
@@ -184,9 +190,13 @@ def _scanner_findings(events: list[dict]) -> list[dict]:
             if tool in ua:
                 ua_hits[ev.get("src_ip") or "未知"].append(ev.get("raw") or ua)
                 ua_tools.add(tool)
-        url = (ev.get("url") or "").lower()
-        if any(url.startswith(p) or p in url for p in SENSITIVE_PATHS):
-            path_hits[ev.get("src_ip") or "未知"].append(ev.get("raw") or url)
+        decoded = _decoded_url(ev).lower()
+        path = decoded.split("?")[0]
+        for p in SENSITIVE_PATHS:
+            if path == p or path.startswith(f"{p}/") or path.startswith(f"{p}."):
+                ip = ev.get("src_ip") or "未知"
+                if p not in path_hits[ip]:
+                    path_hits[ip][p] = ev.get("raw") or decoded
 
     if ua_hits:
         total = sum(len(v) for v in ua_hits.values())
@@ -198,17 +208,18 @@ def _scanner_findings(events: list[dict]) -> list[dict]:
             total,
             extra_desc=f"检测到工具特征：{', '.join(sorted(ua_tools))}。",
         ))
-    # 敏感路径探测：仅当某源 IP 探测到较多敏感路径才算
-    heavy = {ip: lst for ip, lst in path_hits.items() if len(lst) >= 3}
+    # 敏感路径探测：某源 IP 探测了至少 3 个不同敏感路径才判定为扫描
+    heavy = {ip: paths for ip, paths in path_hits.items() if len(paths) >= 3}
     if heavy:
-        total = sum(len(v) for v in heavy.values())
+        total = sum(len(paths) for paths in heavy.values())
+        evidence = [ev for paths in heavy.values() for ev in paths.values()]
         findings.append(_mk_finding(
             "sensitive_path_probe",
             {"name": "敏感路径探测", "severity": "medium", "mitre": "T1595.003"},
             set(heavy.keys()),
-            [e for lst in heavy.values() for e in lst],
+            evidence,
             total,
-            extra_desc="疑似目录/资产扫描行为。",
+            extra_desc=f"源 IP 探测了 {total} 个不同敏感路径，疑似目录或资产扫描行为。",
         ))
     return findings
 
@@ -255,17 +266,26 @@ def _port_scan_findings(events: list[dict]) -> list[dict]:
 
 
 def _brute_force_findings(events: list[dict]) -> list[dict]:
-    login_re = re.compile(r"(login|signin|auth|wp-login|admin)", re.IGNORECASE)
+    login_re = re.compile(r"(login|signin|sign-in|auth|wp-login|admin|session)", re.IGNORECASE)
     by_src = defaultdict(lambda: {"fails": 0, "evidence": [], "times": []})
+    auth_ports = {21, 22, 23, 25, 110, 143, 3389, 5900}
     for ev in events:
         url = ev.get("url") or ""
         status = ev.get("status")
-        is_login = bool(login_re.search(url)) or ev.get("dst_port") in (22, 3389, 21)
-        failed = status in (401, 403) or (ev.get("method") == "POST" and status in (401, 403, 200) and is_login)
-        # SSH/RDP 抓包日志可能没有 HTTP 状态，靠端口+频次
-        if ev.get("dst_port") in (22, 3389, 21):
+        dst_port = ev.get("dst_port")
+        is_login = bool(login_re.search(url)) or dst_port in auth_ports
+        if not is_login:
+            continue
+        # 判定失败：明确返回 401/403，或在无 HTTP 状态码的认证端口（SSH/RDP）持续连接
+        # 显式排除成功响应（如 status=200/302），绝不将正常登录计为爆破尝试
+        if status in (401, 403):
             failed = True
-        if is_login and failed:
+        elif dst_port in auth_ports and status is None:
+            failed = True
+        else:
+            failed = False
+
+        if failed:
             src = ev.get("src_ip") or "未知"
             rec = by_src[src]
             rec["fails"] += 1
@@ -284,7 +304,7 @@ def _brute_force_findings(events: list[dict]) -> list[dict]:
             "brute_force",
             {"name": "暴力破解", "severity": "high", "mitre": "T1110"},
             set(offenders.keys()), evidence, total,
-            extra_desc=f"检测到针对登录/认证服务的高频失败尝试，共 {total} 次。",
+            extra_desc=f"检测到针对登录/认证服务的持续失败尝试，共 {total} 次（已排除成功登录）。",
         ))
     return findings
 
