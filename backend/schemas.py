@@ -56,14 +56,14 @@ class AnalyzeRequest(BaseModel):
 
     mode: Literal["log", "port", "chat"] = "log"
     thread_id: str = "default"
-    message: Optional[str] = None        # 用户自然语言指令
-    log_content: Optional[str] = None    # 直接粘贴的日志文本
-    upload_id: Optional[str] = None      # 已上传文件 id
+    message: Optional[str] = Field(default=None, max_length=2000)        # 用户自然语言指令
+    log_content: Optional[str] = Field(default=None, max_length=20_000_000)    # 直接粘贴的日志文本
+    upload_id: Optional[str] = Field(default=None, max_length=64)      # 已上传文件 id
     # 端口监测模式
-    port: Optional[int] = None
-    iface: Optional[str] = None
-    duration: Optional[int] = None
-    target_host: Optional[str] = None
+    port: Optional[int] = Field(default=None, ge=1, le=65535)
+    iface: Optional[str] = Field(default=None, max_length=64, pattern=r"^[a-zA-Z0-9_\-\. ]*$")
+    duration: Optional[int] = Field(default=15, ge=1, le=300)
+    target_host: Optional[str] = Field(default=None, max_length=256)
 
 
 class Report(BaseModel):
@@ -81,3 +81,5 @@ class Report(BaseModel):
     recommendations: list[str] = Field(default_factory=list)
     stats: dict[str, Any] = Field(default_factory=dict)
     llm_powered: bool = False       # 是否由大模型生成研判
+    is_simulated: bool = False      # 是否为沙箱模拟流量
+    disclaimer: str = ""            # 溯源与分析边界免责说明
